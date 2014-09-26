@@ -1,0 +1,6 @@
+futures==2.1.6
+biopython==1.64
+requests==2.3.0
+beautifulsoup4==4.3.2
+python-dateutil==2.2
+internetarchive==0.7.2
