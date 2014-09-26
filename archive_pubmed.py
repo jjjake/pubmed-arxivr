@@ -173,7 +173,7 @@ def archive_article(record):
     md = get_md(record, soup)
     item = get_item(md['identifier'])
     if item.exists:
-        item.info('skipping, already exists: {0}'.format(item.identifier))
+        log.info('skipping, already exists: {0}'.format(item.identifier))
         return
 
     r = requests.get(pdf_url)
