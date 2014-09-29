@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 import dateutil.parser
 from internetarchive import get_item
 import cStringIO
+import lazytable
 
 
 __title__ = 'pubmed arxivr'
@@ -35,6 +36,12 @@ ch.setFormatter(formatter)
 log.addHandler(fh)
 log.addHandler(ch)
 
+
+def already_archived(pmc, db):
+    if db.getone({'pmc': pmc}):
+        return True
+    else:
+        return False
 
 def get_soup(url, params=None):
     r = requests.get(url, params=params)
@@ -117,7 +124,8 @@ def get_md(record, soup=None):
                                                         eid=id.split()[0])
             external_identifiers.append(external_identifier)
         if not external_identifiers:
-            log.warning('could not find external-identifiers')
+            log.warning(
+                'could not find external-identifiers - pubmed-{0}'.format(record['PMC']))
         return external_identifiers
 
     def get_contributor():
@@ -129,7 +137,7 @@ def get_md(record, soup=None):
                     return strong.contents[0]
                 else:
                     return strong.contents
-        log.warning('could not find contributor')
+        log.warning('could not find contributor - pubmed-{0}'.format(record['PMC']))
 
     md = {
         'mediatype': 'texts',
@@ -153,6 +161,11 @@ def get_md(record, soup=None):
 
 def archive_article(record):
     pmc = record.get('PMC')
+    db = lazytable.open('dowehaveit.sqlite', 'archived')
+    if already_archived(pmc, db):
+        db.close()
+        log.info('skipping, already exists: pubmed-{0}'.format(record['PMC']))
+        return
     doi = get_doi(record)
 
     url = 'http://www.ncbi.nlm.nih.gov/pmc/articles/{pmc}'.format(pmc=pmc)
@@ -174,10 +187,12 @@ def archive_article(record):
     item = get_item(md['identifier'])
     if item.exists:
         log.info('skipping, already exists: {0}'.format(item.identifier))
+        db.insert({'pmc': pmc})
         return
 
     r = requests.get(pdf_url)
     r.raise_for_status()
+    assert r.status_code == 200
     log.info('downloaded: {0}'.format(pdf_url))
 
     # Define filename.
@@ -198,8 +213,11 @@ def archive_article(record):
 
     resps = item.upload(files, metadata=md, queue_derive=False, retries=100,
                         retries_sleep=20)
+    assert all(r.status_code == 200 for r in resps)
 
-    log.info('successfully archived: pubmed-{0}'.format(item.identifier))
+    db.insert({'pmc': pmc})
+    db.close()
+    log.info('successfully archived: {0}'.format(item.identifier))
 
     return resps
 
@@ -207,10 +225,18 @@ def archive_article(record):
 if __name__ == '__main__':
     medline_records_file = sys.argv[-1]
     with open(medline_records_file) as fp:
-        #with futures.ThreadPoolExecutor(max_workers=5) as executor:
-        #    for result in executor.map(archive_article, medline_record_generator(fp)):
-        #        pass
-        for i, record in enumerate(medline_record_generator(fp)):
-            archive_article(record)
-            if i >= 100:
-                sys.exit()
+        # Concurrent archiver.
+        try:
+            with futures.ThreadPoolExecutor(max_workers=10) as executor:
+                for i, record in enumerate(medline_record_generator(fp)):
+                    executor.submit(archive_article, record)
+                    if i >= 500:
+                        sys.exit()
+        except Exception as exc:
+            raise exc
+
+        # Single threaded archiver.
+        #for i, record in enumerate(medline_record_generator(fp)):
+        #    archive_article(record)
+        #    if i >= 1000:
+        #        sys.exit()
