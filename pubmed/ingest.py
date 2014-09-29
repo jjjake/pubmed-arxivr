@@ -10,7 +10,6 @@ import requests
 from bs4 import BeautifulSoup
 import dateutil.parser
 from internetarchive import get_item
-import cStringIO
 import lazytable
 
 
@@ -183,7 +182,7 @@ def archive_article(record):
         pdf_url = get_pdf_link(soup)
     else:
         log.error('skipping, cannot parse PDF link: {0}'.format(record['PMC']))
-        sys.exit(1)
+        return
 
     md = get_md(record, soup)
     item = get_item(md['identifier'])
@@ -194,28 +193,32 @@ def archive_article(record):
 
     r = requests.get(pdf_url)
     r.raise_for_status()
-    assert r.status_code == 200
+    if r.status_code != 200:
+        return
     log.info('downloaded: {0}'.format(pdf_url))
 
     # Define filename.
-    fname = r.headers.get('content-disposition', '').split('=')[-1]
-    if not fname:
-        fname = url.split('/')[-1]
-    fname = '{0}-{1}'.format(pmc, fname)
-    pdf_fp = cStringIO.StringIO()
-    pdf_fp.write(r.content)
+    pdf_fname = r.headers.get('content-disposition', '').split('=')[-1]
+    if not pdf_fname:
+        pdf_fname = url.split('/')[-1]
+    pdf_fname = '{0}-{1}'.format(pmc, pdf_fname)
+    with open(pdf_fname, 'wb') as fp:
+        fp.write(r.content)
 
-    json_fp = cStringIO.StringIO()
-    json.dump(record, json_fp)
+    json_fname = '{0}_medline.json'.format(md['identifier'])
+    with open(json_fname, 'wb') as fp:
+        json.dump(record, fp)
 
-    files = {
-        fname: pdf_fp,
-        '{0}_medline.json'.format(md['identifier']): json_fp
-    }
+    files = [
+        pdf_fname
+        json_fname,
+    ]
 
     resps = item.upload(files, metadata=md, queue_derive=False, retries=100,
-                        retries_sleep=20)
-    assert all(r.status_code == 200 for r in resps)
+                        retries_sleep=20, delete=True)
+    if not all(r.status_code == 200 for r in resps):
+        log.error('not archived: {0}'.format(item.identifier))
+        return
 
     db.upsert({'pmc': pmc, 'lastmodified': time.time()}, {'pmc': pmc})
     db.close()
@@ -228,17 +231,10 @@ if __name__ == '__main__':
     medline_records_file = sys.argv[-1]
     with open(medline_records_file) as fp:
         # Concurrent archiver.
-        try:
-            with futures.ThreadPoolExecutor(max_workers=10) as executor:
+        with futures.ThreadPoolExecutor(max_workers=10) as executor:
+            try:
                 for i, record in enumerate(medline_record_generator(fp)):
                     executor.submit(archive_article, record)
-                    #if i >= 1000:
-                    #    break
-        except Exception as exc:
-            raise exc
-
-        ## Single threaded archiver.
-        #for i, record in enumerate(medline_record_generator(fp)):
-        #    archive_article(record)
-        #    if i >= 1000:
-        #        sys.exit()
+            except Exception as exc:
+                print exc
+                raise exc
