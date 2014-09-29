@@ -210,7 +210,7 @@ def archive_article(record):
         json.dump(record, fp)
 
     files = [
-        pdf_fname
+        pdf_fname,
         json_fname,
     ]
 
