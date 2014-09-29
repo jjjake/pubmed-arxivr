@@ -2,6 +2,7 @@
 import logging
 import sys
 import json
+import time
 
 import futures
 from Bio.Medline import parse as medline_record_generator
@@ -162,6 +163,7 @@ def get_md(record, soup=None):
 def archive_article(record):
     pmc = record.get('PMC')
     db = lazytable.open('dowehaveit.sqlite', 'archived')
+    #db.insert({'pmc': record['PMC'], 'lastmodified': time.time()})
     if already_archived(pmc, db):
         db.close()
         log.info('skipping, already exists: pubmed-{0}'.format(record['PMC']))
@@ -185,10 +187,10 @@ def archive_article(record):
 
     md = get_md(record, soup)
     item = get_item(md['identifier'])
-    if item.exists:
-        log.info('skipping, already exists: {0}'.format(item.identifier))
-        db.insert({'pmc': pmc})
-        return
+    #if item.exists:
+    #    log.info('skipping, already exists: {0}'.format(item.identifier))
+    #    db.upsert({'pmc': pmc, 'lastmodified': time.time()}, {'pmc': pmc})
+    #    return
 
     r = requests.get(pdf_url)
     r.raise_for_status()
@@ -215,7 +217,7 @@ def archive_article(record):
                         retries_sleep=20)
     assert all(r.status_code == 200 for r in resps)
 
-    db.insert({'pmc': pmc})
+    db.upsert({'pmc': pmc, 'lastmodified': time.time()}, {'pmc': pmc})
     db.close()
     log.info('successfully archived: {0}'.format(item.identifier))
 
@@ -230,12 +232,12 @@ if __name__ == '__main__':
             with futures.ThreadPoolExecutor(max_workers=10) as executor:
                 for i, record in enumerate(medline_record_generator(fp)):
                     executor.submit(archive_article, record)
-                    if i >= 500:
-                        sys.exit()
+                    #if i >= 1000:
+                    #    break
         except Exception as exc:
             raise exc
 
-        # Single threaded archiver.
+        ## Single threaded archiver.
         #for i, record in enumerate(medline_record_generator(fp)):
         #    archive_article(record)
         #    if i >= 1000:
