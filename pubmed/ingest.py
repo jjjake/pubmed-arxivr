@@ -161,7 +161,6 @@ def get_md(record, soup=None):
 
 def archive_article(record):
     pmc = record.get('PMC')
-    db = lazytable.open('dowehaveit.sqlite', 'archived')
     #if already_archived(pmc, db):
     #    db.close()
     #    log.info('skipping, already exists: pubmed-{0}'.format(record['PMC']))
@@ -185,21 +184,23 @@ def archive_article(record):
 
     md = get_md(record, soup)
     item = get_item(md['identifier'])
-    #if item.exists:
-    #    log.info('skipping, already exists: {0}'.format(item.identifier))
-    #    db.upsert({'pmc': pmc, 'lastmodified': time.time()}, {'pmc': pmc})
-    #    return
 
     r = requests.get(pdf_url)
-    r.raise_for_status()
     if r.status_code != 200:
-        return
+        # Try grabbing epub instead.
+        pdf_url = pdf_url.replace('pdf', 'epub')
+        r = requests.get(pdf_url)
+        if r.status_code != 200:
+            log.error('cannot find PDF or EPUB for article {0}'.format(pmc))
+            return
+
     log.info('downloaded: {0}'.format(pdf_url))
 
     # Define filename.
     pdf_fname = r.headers.get('content-disposition', '').split('=')[-1]
     if not pdf_fname:
         pdf_fname = url.split('/')[-1]
+
     pdf_fname = '{0}-{1}'.format(pmc, pdf_fname)
     with open(pdf_fname, 'wb') as fp:
         fp.write(r.content)
@@ -219,8 +220,10 @@ def archive_article(record):
         log.error('not archived: {0}'.format(item.identifier))
         return
 
+    db = lazytable.open('dowehaveit.sqlite', 'archived')
     db.upsert({'pmc': pmc, 'lastmodified': time.time()}, {'pmc': pmc})
     db.close()
+
     log.info('successfully archived: {0}'.format(item.identifier))
 
     return resps
@@ -240,9 +243,9 @@ if __name__ == '__main__':
 
     with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         try:
-            for record in executor.map(archive_article, parse_records()):
-                print record
-            #for record in parse_records():
-            #    future = executor.submit(archive_article, record)
+            #for record in executor.map(archive_article, parse_records()):
+            #    print record
+            for record in parse_records():
+                future = executor.submit(archive_article, record)
         except Exception as exc:
             print exc
