@@ -161,10 +161,6 @@ def get_md(record, soup=None):
 
 def archive_article(record):
     pmc = record.get('PMC')
-    #if already_archived(pmc, db):
-    #    db.close()
-    #    log.info('skipping, already exists: pubmed-{0}'.format(record['PMC']))
-    #    return
     doi = get_doi(record)
 
     url = 'http://www.ncbi.nlm.nih.gov/pmc/articles/{pmc}'.format(pmc=pmc)
@@ -185,7 +181,7 @@ def archive_article(record):
     md = get_md(record, soup)
     item = get_item(md['identifier'])
 
-    r = requests.get(pdf_url)
+    r = requests.get(pdf_url, stream=True)
     if r.status_code != 200:
         # Try grabbing epub instead.
         pdf_url = pdf_url.replace('pdf', 'epub')
@@ -196,14 +192,12 @@ def archive_article(record):
 
     log.info('downloaded: {0}'.format(pdf_url))
 
-    # Define filename.
-    pdf_fname = r.headers.get('content-disposition', '').split('=')[-1]
-    if not pdf_fname:
-        pdf_fname = url.split('/')[-1]
-
-    pdf_fname = '{0}-{1}'.format(pmc, pdf_fname)
+    pdf_fname = '{0}-{1}'.format(pmc, pdf_url.split('/')[-1])
     with open(pdf_fname, 'wb') as fp:
-        fp.write(r.content)
+        for chunk in r.iter_content(chunk_size=1024):
+            if chunk:
+                fp.write(chunk)
+                fp.flush()
 
     json_fname = '{0}_medline.json'.format(md['identifier'])
     with open(json_fname, 'wb') as fp:
