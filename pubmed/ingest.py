@@ -162,11 +162,10 @@ def get_md(record, soup=None):
 def archive_article(record):
     pmc = record.get('PMC')
     db = lazytable.open('dowehaveit.sqlite', 'archived')
-    #db.insert({'pmc': record['PMC'], 'lastmodified': time.time()})
-    if already_archived(pmc, db):
-        db.close()
-        log.info('skipping, already exists: pubmed-{0}'.format(record['PMC']))
-        return
+    #if already_archived(pmc, db):
+    #    db.close()
+    #    log.info('skipping, already exists: pubmed-{0}'.format(record['PMC']))
+    #    return
     doi = get_doi(record)
 
     url = 'http://www.ncbi.nlm.nih.gov/pmc/articles/{pmc}'.format(pmc=pmc)
@@ -226,15 +225,24 @@ def archive_article(record):
 
     return resps
 
+def parse_records():
+    db = lazytable.open('dowehaveit.sqlite', 'archived')
+    with open(medline_records_file) as fp:
+        for record in medline_record_generator(fp):
+            if already_archived(record['PMC'], db):
+                log.info('skipping, already exists: pubmed-{0}'.format(record['PMC']))
+                continue
+            yield record
 
 if __name__ == '__main__':
-    medline_records_file = sys.argv[-1]
-    with open(medline_records_file) as fp:
-        # Concurrent archiver.
-        with futures.ThreadPoolExecutor(max_workers=10) as executor:
-            try:
-                for i, record in enumerate(medline_record_generator(fp)):
-                    executor.submit(archive_article, record)
-            except Exception as exc:
-                print exc
-                raise exc
+    medline_records_file = 'pmc_results.txt'
+    max_workers = 10
+
+    with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        try:
+            for record in executor.map(archive_article, parse_records()):
+                print record
+            #for record in parse_records():
+            #    future = executor.submit(archive_article, record)
+        except Exception as exc:
+            print exc
