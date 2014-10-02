@@ -1,6 +1,7 @@
 #!/usr/bin/env python
-import logging
 import sys
+import yaml
+import logging
 import json
 import time
 
@@ -19,6 +20,8 @@ __author__ = 'Jake Johnson'
 __license__ = 'AGPL 3'
 __copyright__ = 'Copyright 2014 Internet Archive'
 
+
+CONFIG = yaml.load(open('internetarchive.yml'))
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -183,7 +186,7 @@ def archive_article(record):
         return
 
     md = get_md(record, soup)
-    item = get_item(md['identifier'])
+    item = get_item(md['identifier'], config=CONFIG)
 
     r = requests.get(pdf_url)
     if r.status_code != 200:
@@ -232,14 +235,15 @@ def parse_records():
     db = lazytable.open('dowehaveit.sqlite', 'archived')
     with open(medline_records_file) as fp:
         for record in medline_record_generator(fp):
-            if already_archived(record['PMC'], db):
+            if not already_archived(record['PMC'], db):
+                yield record
+            else:
                 log.info('skipping, already exists: pubmed-{0}'.format(record['PMC']))
-                continue
-            yield record
+
 
 if __name__ == '__main__':
     medline_records_file = 'pmc_results.txt'
-    max_workers = 10
+    max_workers = 4
 
     with futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         try:
